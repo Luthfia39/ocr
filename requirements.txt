@@ -7,3 +7,5 @@ pip
     numpy
     requests 
     pillow
+    celery
+    redis
