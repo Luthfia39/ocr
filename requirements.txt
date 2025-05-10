@@ -5,3 +5,5 @@ pip
     pytesseract
     pdf2image
     numpy
+    requests 
+    pillow
