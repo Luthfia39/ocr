@@ -1,0 +1,7 @@
+pip
+    autopep8
+    Flask==3.0.3
+    opencv-python
+    pytesseract
+    pdf2image
+    numpy
