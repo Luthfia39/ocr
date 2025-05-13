@@ -130,7 +130,7 @@ def process_pdf():
     finally:
         shutil.rmtree(temp_dir)
 
-def background_process(pdf_url):
+def background_process(pdf_url, id):
     print('mulai')
     temp_dir = tempfile.mkdtemp()
     try:
@@ -152,6 +152,7 @@ def background_process(pdf_url):
         }
         try:
             response = requests.post("http://127.0.0.1:8000/api/hook", json={
+                "task_id": id,
                 "pdf_url": pdf_url,
                 "is_ugm_format": is_ugm,
                 "letter_type": letter_type,
@@ -168,12 +169,13 @@ def background_process(pdf_url):
 @app.route("/submit_pdf", methods=["POST"])
 def submit_pdf():
     data = request.get_json()
+    id = data.get("task_id")
     pdf_url = data.get("pdf_url")
 
     if not pdf_url:
         return jsonify({"success": False, "message": "Missing 'pdf_url'"}), 400
 
-    Thread(target=background_process, args=(pdf_url,)).start()
+    Thread(target=background_process, args=(pdf_url, id)).start()
     return jsonify({"success": True, "message": "Job accepted and processing"}), 202
 
 if __name__ == "__main__":
