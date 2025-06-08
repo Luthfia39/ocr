@@ -13,7 +13,7 @@ from pdf2image import convert_from_path
 from threading import Thread
 
 app = Flask(__name__)
-POPPLER = r'C:\poppler-24.08.0\Library\bin'  # ← Ubah sesuai direktori Poppler kamu
+POPPLER = r'/opt/local/bin' 
 
 def download_pdf(pdf_url, output_dir):
     local_pdf_path = os.path.join(output_dir, 'downloaded.pdf')
@@ -45,13 +45,73 @@ def is_ugm_format(ocr_text):
     print('ygm')
     return "universitas gadjah mada" in ocr_text[:300].lower()
 
+TITLE_KEYWORDS = ["Surat Pernyataan", "Surat Tugas", "Surat Keterangan",
+                  "Surat Kuasa", "Surat Pelimpahan Wewenang", "Surat Edaran",
+                  "Berita Acara", "Nota Dinas", "Keputusan", "Laporan", "Peraturan"]
+
+SALUTATION_KEYWORDS = ["Yth.", "Yang Terhormat", "Kepada"]
+REGULATION_KEYWORDS = ["Keputusan tentang", "Peraturan tentang", "No."]
+
+def is_new_document(text):
+    """Checks if a page contains keywords that indicate a new document."""
+    for keyword in TITLE_KEYWORDS + SALUTATION_KEYWORDS + REGULATION_KEYWORDS:
+        # Use re.search for case-insensitive, whole-word matching
+        if re.search(rf"\b{re.escape(keyword)}\b", text, re.IGNORECASE):
+            return True
+    return False
+
+def group_pages(ocr_results):
+    """Groups OCR results into separate letters based on predefined keywords.
+    
+    Args:
+        ocr_results (dict): A dictionary where keys are document identifiers
+                            (e.g., page numbers, image paths) and values are
+                            the OCR'd text for that page.
+    
+    Returns:
+        list: A list of strings, where each string represents a grouped document.
+    """
+    grouped_docs = []
+    current_doc = ""
+
+    # Sort items if the order of processing pages matters, 
+    # e.g., by image path if they are sequentially named
+    sorted_ocr_items = sorted(ocr_results.items()) 
+
+    for img_path, text in sorted_ocr_items:
+        if current_doc and is_new_document(text):
+            grouped_docs.append(current_doc)  # Save previous document
+            current_doc = text  # Start a new one
+        else:
+            current_doc += "\n" + text if current_doc else text  # Merge if not new
+
+    if current_doc:
+        grouped_docs.append(current_doc)  # Save the last document
+
+    return grouped_docs
+
 def classify_document(ocr_text):
     patterns = {
-        "surat_permohonan": r"(?i)\b(permohonan|memohon|mohon|bersedia untuk)\b",
-        "surat_tugas": r"(?i)\b(surat tugas|memberikan tugas|kepada yang bersangkutan)\b",
-        "surat_kuasa": r"(?i)\b(surat kuasa|memberi wewenang|pemberi kuasa|penerima kuasa)\b",
-        "berita_acara": r"(?i)\b(berita acara|rangkaian acara)\b",
-        "nota_dinas": r"(?i)\b(nota dinas|hormat saya|hal\s*:\s*)\b"
+        # "peraturan": r"(?i)\b(peraturan|nomor.*tahun.*tentang|dengan rahmat tuhan|menimbang :, bahwa|meningkat :|memutuskan|menetapkan : peraturan.*tentang|mulai berlaku pada tanggal ditetapkan)\b",
+        # "keputusan": r"(?i)\b(keputusan|tentang|menimbang|meningkat|memutuskan|menetapkan : keputusan.*tentang|mulai berlaku pada tanggal ditetapkan)\b",
+        # "salinan": r"(?i)\b(salinan|salinan sesuai dengan aslinya)\b",
+        # "sop": r"(?i)\b(nomor pos|nama pos)\b",
+        # "surat_edaran": r"(?i)\b(surat edaran)\b",
+        # "nota_dinas": r"(?i)\b(nota dinas|dari :.*hal :)\b",
+        # "memo": r"(?i)\b(memo|dari :)\b",
+        # "surat_undangan": r"(?i)\b(hari.*tanggal|pukul|tempat)\b",
+        # "kartu_undangan": r"(?i)\b(susunan acara|hari.*tanggal|pukul|tempat|nama acara)\b",
+        "surat_tugas": r"(?i)\b(surat tugas|yang bertanda tangan.*memberikan tugas kepada)\b",
+        # "surat_kuasa": r"(?i)\b(surat kuasa|yang bertanda tangan.*memberi kuasa kepada)\b",
+        # "surat_pelimpahan_wewenang": r"(?i)\b(surat pelimpahan wewenang|melimpahkan wewenang)\b",
+        "surat_keterangan": r"(?i)\b(surat keterangan)\b",
+        "surat_pernyataan": r"(?i)\b(surat pernyataan|yang bertanda tangan.*menyatakan bahwa)\b",
+        "surat_rekomendasi_beasiswa": r"(?i)\b(surat rekomendasi beasiswa)\b",
+        # "pengumuman": r"(?i)\b(pengumuman)\b",
+        # "berita_acara": r"(?i)\b(berita acara)\b",
+        # "laporan": r"(?i)\b(laporan|pendahuluan|tujuan|kesimpulan|saran)\b",
+        # "notula": r"(?i)\b(notula|pemimpin rapat|kegiatan rapat)\b",
+        # "telaah_staf": r"(?i)\b(telaah staf)\b",
     }
 
     for category, pattern in patterns.items():
@@ -60,10 +120,51 @@ def classify_document(ocr_text):
     print('jenis')
     return "Tidak Diketahui"
 
+# def detect_patterns(text, letter_type):
+#     patterns = {
+#         "Surat Permohonan": {
+#             "nomor_surat": r"\b(\d+/UN[1I]/[A-Z0-9.-]+/[A-Z]+/[A-Z]+/\d{4})\b",
+#             "pengirim": r"Dari\s*:\s*([^\n]+)",
+#             "tujuan": r"Kepada\s*:\s*([^\n]+)"
+#         },
+#         "Surat Tugas": {
+#             "nomor_surat": r"\b(\d+/UN[1I]/[A-Z0-9.-]+/[A-Z]+/[A-Z]+/\d{4})\b",
+#             "isi_surat": r"(Yang bertanda tangan.*?)mestinya\.",
+#             "ttd_surat": r"(Ketua|Dekan|Rektor|Direktur)[\s,]*\s*([\w\s.,-]+)\s*NIP\.?\s*(\d+)",
+#             "penerima_surat": r"Kepada Yth\.\s*([\w\s.,-]+)"
+#         },
+#         "Surat Keterangan": {
+#             "nomor_surat": r"\b(\d+/UN[1I]/[A-Z0-9.-]+/[A-Z]+/[A-Z]+/\d{4})\b",
+#             # "pengirim": r"Dari\s*:\s*([^\n]+)",
+#             "tujuan": r"Kepada\s*:\s*([^\n]+)",
+#             "isi_surat": r"(Yang bertanda tangan.*?)mestinya\.",
+#             "ttd_surat": r"(Ketua|Dekan|Rektor|Direktur)[\s,]*\s*([\w\s.,-]+)\s*NIP\.?\s*(\d+)",
+#             # "penerima_surat": r"Kepada Yth\.\s*([\w\s.,-]+)"
+#         },
+#         "default": {
+#             "nomor_surat": r"\b(\d+/UN[1I]/[A-Z0-9.-]+/[A-Z]+/[A-Z]+/\d{4})\b",
+#             # "pengirim": r"Asal\s*:\s*([^\n]+)"
+#         }
+#     }
+
+#     result = {}
+#     pattern_set = patterns.get(letter_type, patterns["default"])
+
+#     for key, regex in pattern_set.items():
+#         match = re.search(regex, text, re.IGNORECASE | re.DOTALL)
+#         # match = re.search(regex, text, re.IGNORECASE | re.DOTALL | re.MULTILINE)
+#         if match:
+#             result[key] = match.group(1).strip()
+#     print('pattern')
+#     return result
+
+import re
+from collections import OrderedDict
+
 def detect_patterns(text, letter_type):
     patterns = {
         "Surat Permohonan": {
-            "nomor_surat": r"NOMOR\s*:\s*(\S+)",
+            "nomor_surat": r"\b(\d+/UN[1I]/[A-Z0-9.-]+/[A-Z]+/[A-Z]+/\d{4})\b",
             "pengirim": r"Dari\s*:\s*([^\n]+)",
             "tujuan": r"Kepada\s*:\s*([^\n]+)"
         },
@@ -71,11 +172,16 @@ def detect_patterns(text, letter_type):
             "nomor_surat": r"\b(\d+/UN[1I]/[A-Z0-9.-]+/[A-Z]+/[A-Z]+/\d{4})\b",
             "isi_surat": r"(Yang bertanda tangan.*?)mestinya\.",
             "ttd_surat": r"(Ketua|Dekan|Rektor|Direktur)[\s,]*\s*([\w\s.,-]+)\s*NIP\.?\s*(\d+)",
-            "penerima_surat": r"Kepada Yth\.\s*([\w\s.,-]+)"
+            # "penerima_surat": r"Kepada Yth\.\s*([\w\s.,-]+)"
+        },
+        "Surat Keterangan": {
+            "nomor_surat": r"\b(\d+/UN[1I]/[A-Z0-9.-]+/[A-Z]+/[A-Z]+/\d{4})\b",
+            "tujuan": r"Kepada\s*:\s*([^\n]+)",
+            "isi_surat": r"(Yang bertanda tangan.*?)mestinya\.",
+            "ttd_surat": r"(Ketua|Dekan|Rektor|Direktur)[\s,]*\s*([\w\s.,-]+)\s*NIP\.?\s*(\d+)"
         },
         "default": {
-            "nomor_surat": r"NOMOR\s*:\s*(\S+)",
-            "pengirim": r"Asal\s*:\s*([^\n]+)"
+            "nomor_surat": r"\b(\d+/UN[1I]/[A-Z0-9.-]+/[A-Z]+/[A-Z]+/\d{4})\b"
         }
     }
 
@@ -83,9 +189,18 @@ def detect_patterns(text, letter_type):
     pattern_set = patterns.get(letter_type, patterns["default"])
 
     for key, regex in pattern_set.items():
-        match = re.search(regex, text, re.IGNORECASE | re.DOTALL)
+        match = re.search(regex, text, flags=re.IGNORECASE | re.DOTALL)
         if match:
-            result[key] = match.group(1).strip()
+            full_match = match.group(1).strip()
+            start_pos = match.start(1)
+            length = len(full_match)
+
+            result[key] = {
+                'text': full_match,
+                'start': start_pos,
+                'length': length
+            }
+
     print('pattern')
     return result
 
@@ -145,6 +260,8 @@ def background_process(pdf_url, id):
         letter_type = classify_document(ocr_text)
         extracted_fields = detect_patterns(ocr_text, letter_type)
 
+        new_path = pdf_url.split('suratMasuk/')[1]
+
         # Kirim hasil ke Laravel
         headers = {
             'Content-Type': 'application/json',  
@@ -153,7 +270,7 @@ def background_process(pdf_url, id):
         try:
             response = requests.post("http://127.0.0.1:8000/api/hook", json={
                 "task_id": id,
-                "pdf_url": pdf_url,
+                "pdf_url": new_path,
                 "is_ugm_format": is_ugm,
                 "letter_type": letter_type,
                 "ocr_text": ocr_text,
