@@ -107,8 +107,8 @@ def classify_document(ocr_text):
     patterns = {
         "surat_tugas": r"(?i)\b(surat tugas|yang bertanda tangan.*memberikan tugas kepada)\b",
         "surat_keterangan": r"(?i)\b(surat keterangan)\b",
-        "surat_pernyataan": r"(?i)\b(surat pernyataan|yang bertanda tangan.*menyatakan bahwa)\b",
-        "surat_rekomendasi_beasiswa": r"(?i)\b(surat rekomendasi beasiswa)\b",
+        "surat_permohonan": r"(?i)\b(permohonan|sehubungan dengan.*terima kasih)\b",
+        # "surat_rekomendasi_beasiswa": r"(?i)\b(surat rekomendasi beasiswa)\b",
     }
 
     for category, pattern in patterns.items():
@@ -120,23 +120,29 @@ def classify_document(ocr_text):
 def detect_patterns(text, letter_type):
     patterns = {
         "Surat Permohonan": {
-            "nomor_surat": r"\b(\d+/UN[1I]/[A-Z0-9.-]+/[A-Z]+/[A-Z]+/\d{4})\b",
-            "pengirim": r"Dari\s*:\s*([^\n]+)",
-            "tujuan": r"Kepada\s*:\s*([^\n]+)"
+            "nomor_surat": r"(\d+/UN[1I][A-Z0-9.-]*\/[A-Z0-9.-]+\/[A-Z]+\/[A-Z]+\/\d{4})", 
+            "isi_surat": r"((?:Dengan hormat|Sehubungan dengan).*?terima kasih)",
+            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
+            "penerima_surat": r"Yth\.\s*(.*?)\s*Dengan", 
+            "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         },
-        "Surat Tugas": {
-            "nomor_surat": r"\b(\d+/UN[1I]/[A-Z0-9.-]+/[A-Z]+/[A-Z]+/\d{4})\b",
-            "isi_surat": r"(Yang bertanda tangan.*?)mestinya\.",
-            "ttd_surat": r"(Ketua|Dekan|Rektor|Direktur)[\s,]*\s*([\w\s.,-]+)\s*NIP\.?\s*(\d+)",
+        # tidak memiliki data pengirim/penerima
+        "Surat Tugas": { 
+            "nomor_surat": r"(\d+/UN[1I][A-Z0-9.-]*\/[A-Z0-9.-]+\/[A-Z]+\/[A-Z]+\/\d{4})", 
+            "isi_surat": r"(Yang bertanda tangan.*?(?:mestinya|semestinya)\.)",
+            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
+            "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         },
-        "Surat Keterangan": {
-            "nomor_surat": r"\b(\d+/UN[1I]/[A-Z0-9.-]+/[A-Z]+/[A-Z]+/\d{4})\b",
-            "tujuan": r"Kepada\s*:\s*([^\n]+)",
-            "isi_surat": r"(Yang bertanda tangan.*?)mestinya\.",
-            "ttd_surat": r"(Ketua|Dekan|Rektor|Direktur)[\s,]*\s*([\w\s.,-]+)\s*NIP\.?\s*(\d+)"
+        "Surat Keterangan": { 
+           "nomor_surat": r"(\d+/UN[1I][A-Z0-9.-]*\/[A-Z0-9.-]+\/[A-Z]+\/[A-Z]+\/\d{4})", 
+            "isi_surat": r"(Yang bertanda tangan.*?(?:mestinya|semestinya)\.)",
+            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
+            "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         },
-        "default": {
-            "nomor_surat": r"\b(\d+/UN[1I]/[A-Z0-9.-]+/[A-Z]+/[A-Z]+/\d{4})\b"
+        "default": { 
+            "nomor_surat": r"(\d+/UN[1I][A-Z0-9.-]*\/[A-Z0-9.-]+\/[A-Z]+\/[A-Z]+\/\d{4})", 
+            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
+            "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         }
     }
 
@@ -144,17 +150,32 @@ def detect_patterns(text, letter_type):
     pattern_set = patterns.get(letter_type, patterns["default"])
 
     for key, regex in pattern_set.items():
+        # Pastikan flags re.IGNORECASE dan re.DOTALL selalu digunakan
         match = re.search(regex, text, flags=re.IGNORECASE | re.DOTALL)
         if match:
-            full_match = match.group(1).strip()
-            start_pos = match.start(1)
-            length = len(full_match)
+            if key == "tanggal":
+                # Ambil hanya grup tangkap kedua, yaitu bagian tanggal, bulan, tahun
+                full_match_text = match.group(2).strip()
+                # Posisi start dari grup tangkap kedua
+                start_pos = match.start(2)
+                length = len(full_match_text)
+            elif key == "ttd_surat":
+                # Pastikan ini tetap mengambil nama orang dari group 1
+                full_match_text = match.group(1).strip()
+                start_pos = match.start(1)
+                length = len(full_match_text)
+            else:
+                # Untuk key lain, seperti sebelumnya, ambil group 1
+                full_match_text = match.group(1).strip()
+                start_pos = match.start(1)
+                length = len(full_match_text)
 
             result[key] = {
-                'text': full_match,
+                'text': full_match_text,
                 'start': start_pos,
                 'length': length
             }
+    
     print('Patterns detected.')
     return result
 
