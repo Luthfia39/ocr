@@ -7,6 +7,7 @@ import tempfile
 import requests
 import pytesseract
 import cv2
+import editdistance # <-- Tambahkan ini
 
 from flask import Flask, request, jsonify
 from pdf2image import convert_from_path
@@ -16,13 +17,11 @@ app = Flask(__name__)
 
 # --- IMPORTANT: Configure these paths for your local setup ---
 # Path to the 'bin' directory of your Poppler installation
-# Example for Windows: POPPLER = r'C:\Program Files\poppler-0.68.0\bin'
-# Example for macOS (might vary): POPPLER = r'/opt/homebrew/bin' or r'/usr/local/opt/poppler/bin'
-# Example for Linux (often /usr/bin or /usr/local/bin, but check your system):
 POPPLER = r'/opt/local/bin' # You might need to change this!
 
-# If Tesseract isn't in your PATH, you might need to specify its path here:
-# pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe' # Example for Windows
+# --- Path to your Ground Truth data ---
+# Pastikan direktori ini ada dan berisi file JSON ground truth Anda
+GROUND_TRUTH_DIR = 'ground_truth_data' 
 
 # --- Keywords for document grouping ---
 TITLE_KEYWORDS = ["Surat Pernyataan", "Surat Tugas", "Surat Keterangan",
@@ -32,7 +31,7 @@ TITLE_KEYWORDS = ["Surat Pernyataan", "Surat Tugas", "Surat Keterangan",
 SALUTATION_KEYWORDS = ["Yth.", "Yang Terhormat", "Kepada"]
 REGULATION_KEYWORDS = ["Keputusan tentang", "Peraturan tentang", "No."]
 
-# --- Helper Functions (No changes needed to their core logic) ---
+# --- Helper Functions (Existing functions remain, no core logic changes) ---
 def is_new_document(text):
     """Checks if a page contains keywords that indicate a new document."""
     for keyword in TITLE_KEYWORDS + SALUTATION_KEYWORDS + REGULATION_KEYWORDS:
@@ -40,34 +39,21 @@ def is_new_document(text):
             return True
     return False
 
-def group_pages(ocr_results_dict): # Parameter renamed to avoid confusion
-    """Groups OCR results into separate letters based on predefined keywords.
-    
-    Args:
-        ocr_results_dict (dict): A dictionary where keys are document identifiers
-                            (e.g., page numbers, image paths) and values are
-                            the OCR'd text for that page.
-    
-    Returns:
-        list: A list of strings, where each string represents a grouped document.
-    """
+def group_pages(ocr_results_dict):
+    """Groups OCR results into separate letters based on predefined keywords."""
     grouped_docs = []
     current_doc = ""
-
-    # Sort items by filename (assuming page_1.png, page_2.png for sequential order)
     sorted_ocr_items = sorted(ocr_results_dict.items(), 
                               key=lambda item: int(re.search(r'\d+', item[0]).group()) if re.search(r'\d+', item[0]) else 0)
 
     for img_path, text in sorted_ocr_items:
         if current_doc and is_new_document(text):
-            grouped_docs.append(current_doc)  # Save previous document
-            current_doc = text  # Start a new one
+            grouped_docs.append(current_doc)
+            current_doc = text
         else:
-            current_doc += "\n" + text if current_doc else text  # Merge if not new
-
+            current_doc += "\n" + text if current_doc else text
     if current_doc:
-        grouped_docs.append(current_doc)  # Save the last document
-
+        grouped_docs.append(current_doc)
     return grouped_docs
 
 def download_pdf(pdf_url, output_dir):
@@ -82,11 +68,9 @@ def download_pdf(pdf_url, output_dir):
     except Exception as e:
         raise Exception(f"Download failed: {e}")
 
-# Modified to return a dictionary of page_path: text
 def perform_ocr_and_get_page_texts(image_dir):
     """Performs OCR on images and returns a dictionary of page_path: text."""
     ocr_results_per_page = {}
-    # Ensure stable processing order by sorting filenames
     for filename in sorted(os.listdir(image_dir), key=lambda f: int(re.search(r'\d+', f).group()) if re.search(r'\d+', f) else 0):
         if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff')):
             img_path = os.path.join(image_dir, filename)
@@ -95,22 +79,20 @@ def perform_ocr_and_get_page_texts(image_dir):
                 print(f"Gagal baca gambar: {img_path}")
                 continue
             text = pytesseract.image_to_string(img).strip()
-            ocr_results_per_page[filename] = text # Store text per page
+            ocr_results_per_page[filename] = text
     print('OCR per page completed.')
     return ocr_results_per_page
 
 def is_ugm_format(ocr_text):
     print('Checking UGM format...')
-    return "universitas gadjah mada" in ocr_text[:500].lower() # Increased check area for robustness
+    return "universitas gadjah mada" in ocr_text[:500].lower()
 
 def classify_document(ocr_text):
     patterns = {
         "surat_tugas": r"(?i)\b(surat tugas|yang bertanda tangan.*memberikan tugas kepada)\b",
         "surat_keterangan": r"(?i)\b(surat keterangan)\b",
         "surat_permohonan": r"(?i)\b(permohonan|sehubungan dengan.*terima kasih)\b",
-        # "surat_rekomendasi_beasiswa": r"(?i)\b(surat rekomendasi beasiswa)\b",
     }
-
     for category, pattern in patterns.items():
         if re.search(pattern, ocr_text, re.IGNORECASE):
             return category.title().replace("_", " ")
@@ -126,7 +108,6 @@ def detect_patterns(text, letter_type):
             "penerima_surat": r"Yth\.\s*(.*?)\s*Dengan", 
             "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         },
-        # tidak memiliki data pengirim/penerima
         "Surat Tugas": { 
             "nomor_surat": r"(\d+/UN[1I][A-Z0-9.-]*\/[A-Z0-9.-]+\/[A-Z]+\/[A-Z]+\/\d{4})", 
             "isi_surat": r"(Yang bertanda tangan.*?(?:mestinya|semestinya)\.)",
@@ -145,39 +126,83 @@ def detect_patterns(text, letter_type):
             "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         }
     }
-
     result = {}
     pattern_set = patterns.get(letter_type, patterns["default"])
-
     for key, regex in pattern_set.items():
-        # Pastikan flags re.IGNORECASE dan re.DOTALL selalu digunakan
         match = re.search(regex, text, flags=re.IGNORECASE | re.DOTALL)
         if match:
             if key == "tanggal":
-                # Ambil hanya grup tangkap kedua, yaitu bagian tanggal, bulan, tahun
                 full_match_text = match.group(2).strip()
-                # Posisi start dari grup tangkap kedua
                 start_pos = match.start(2)
                 length = len(full_match_text)
             elif key == "ttd_surat":
-                # Pastikan ini tetap mengambil nama orang dari group 1
                 full_match_text = match.group(1).strip()
                 start_pos = match.start(1)
                 length = len(full_match_text)
             else:
-                # Untuk key lain, seperti sebelumnya, ambil group 1
                 full_match_text = match.group(1).strip()
                 start_pos = match.start(1)
                 length = len(full_match_text)
-
             result[key] = {
                 'text': full_match_text,
                 'start': start_pos,
                 'length': length
             }
-    
     print('Patterns detected.')
     return result
+
+# --- New Accuracy Calculation Functions ---
+def load_ground_truth(doc_filename):
+    """Loads ground truth data for a given document filename."""
+    gt_path = os.path.join(GROUND_TRUTH_DIR, os.path.basename(doc_filename).replace('.pdf', '.json'))
+    if os.path.exists(gt_path):
+        with open(gt_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return None
+
+def calculate_cer(ground_truth_text, ocr_text):
+    """Calculates Character Error Rate (CER)."""
+    if not ground_truth_text or not ocr_text:
+        return 1.0 # Max error if one is empty
+    return editdistance.eval(ground_truth_text, ocr_text) / len(ground_truth_text)
+
+def calculate_wer(ground_truth_text, ocr_text):
+    """Calculates Word Error Rate (WER)."""
+    gt_words = ground_truth_text.split()
+    ocr_words = ocr_text.split()
+    if not gt_words or not ocr_words:
+        return 1.0 # Max error if one is empty
+    return editdistance.eval(gt_words, ocr_words) / len(gt_words)
+
+def calculate_field_accuracy(predicted_fields, ground_truth_fields):
+    """Calculates accuracy for extracted fields."""
+    field_accuracies = {}
+    total_fields_to_check = 0
+    correctly_extracted_fields = 0
+
+    # Ensure ground_truth_fields is treated as a dict if it's stored as text in JSON
+    if isinstance(ground_truth_fields, str):
+        try:
+            ground_truth_fields = json.loads(ground_truth_fields)
+        except json.JSONDecodeError:
+            ground_truth_fields = {} # Fallback if not valid JSON string
+
+    for field_name, gt_value in ground_truth_fields.items():
+        if field_name in predicted_fields:
+            predicted_value = predicted_fields[field_name]['text']
+            # For field accuracy, a simple exact match (case-insensitive and stripped) is common
+            is_correct = (str(predicted_value).strip().lower() == str(gt_value).strip().lower())
+            field_accuracies[field_name] = {"correct": is_correct, "predicted": predicted_value, "ground_truth": gt_value}
+            total_fields_to_check += 1
+            if is_correct:
+                correctly_extracted_fields += 1
+        else:
+            field_accuracies[field_name] = {"correct": False, "predicted": None, "ground_truth": gt_value}
+            total_fields_to_check += 1
+    
+    overall_field_accuracy = (correctly_extracted_fields / total_fields_to_check) if total_fields_to_check > 0 else 0.0
+    
+    return overall_field_accuracy, field_accuracies
 
 # --- Flask Routes ---
 
@@ -201,25 +226,45 @@ def process_pdf():
         for i, image in enumerate(images):
             image.save(os.path.join(temp_dir, f"page_{i+1}.png"), "PNG")
 
-        # Step 1: Perform OCR to get text for each page
         ocr_results_per_page = perform_ocr_and_get_page_texts(temp_dir)
-        
-        # Step 2: Group pages into logical documents
         grouped_documents = group_pages(ocr_results_per_page)
 
         processed_documents_info = []
         for i, doc_text in enumerate(grouped_documents):
-            # Step 3: Process each grouped document
-            is_ugm = is_ugm_format(doc_text) # Check UGM format on the full document
+            is_ugm = is_ugm_format(doc_text)
             letter_type = classify_document(doc_text)
             extracted_fields = detect_patterns(doc_text, letter_type)
             
+            # --- Load Ground Truth and Calculate Accuracy (for process_pdf route) ---
+            doc_filename = os.path.basename(pdf_url) # Using base filename for GT lookup
+            ground_truth_data = load_ground_truth(doc_filename)
+
+            accuracy_metrics = {}
+            if ground_truth_data:
+                # CER/WER for full text
+                cer = calculate_cer(ground_truth_data.get('full_text', ''), doc_text)
+                wer = calculate_wer(ground_truth_data.get('full_text', ''), doc_text)
+                
+                # Field accuracy
+                overall_field_acc, individual_field_acc = calculate_field_accuracy(
+                    extracted_fields, ground_truth_data.get('extracted_fields', {})
+                )
+                
+                accuracy_metrics = {
+                    "cer": cer,
+                    "wer": wer,
+                    "overall_field_accuracy": overall_field_acc,
+                    "individual_field_accuracy": individual_field_acc
+                }
+            # --- End Accuracy Calculation ---
+
             processed_documents_info.append({
                 "document_index": i + 1,
                 "is_ugm_format": is_ugm,
                 "letter_type": letter_type,
-                "ocr_text": doc_text, # Full text of the grouped document
-                "extracted_fields": extracted_fields
+                "ocr_text": doc_text,
+                "extracted_fields": extracted_fields,
+                "accuracy_metrics": accuracy_metrics # Add accuracy metrics here
             })
 
         return jsonify({
@@ -230,10 +275,10 @@ def process_pdf():
         }), 200
 
     except Exception as e:
-        print(f"Error during PDF processing: {e}") # Log the error for debugging
+        print(f"Error during PDF processing: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
     finally:
-        shutil.rmtree(temp_dir) # Clean up temporary directory
+        shutil.rmtree(temp_dir)
 
 @app.route("/submit_pdf", methods=["POST"])
 def submit_pdf():
@@ -244,6 +289,7 @@ def submit_pdf():
     if not pdf_url or not task_id:
         return jsonify({"success": False, "message": "Missing 'pdf_url' or 'task_id'"}), 400
 
+    # It's better to pass the ground truth filename/ID if you want accuracy in background
     Thread(target=background_process, args=(pdf_url, task_id)).start()
     return jsonify({"success": True, "message": "Job accepted and processing in background"}), 202
 
@@ -258,25 +304,43 @@ def background_process(pdf_url, task_id):
         for i, image in enumerate(images):
             image.save(os.path.join(temp_dir, f"page_{i+1}.png"), "PNG")
 
-        # 1. Perform OCR to get text for each page
         ocr_results_per_page = perform_ocr_and_get_page_texts(temp_dir)
-        
-        # 2. Group pages into logical documents using is_new_document and group_pages
         grouped_documents = group_pages(ocr_results_per_page)
 
-        # 3. Process each grouped document
         all_processed_docs = []
         for i, doc_text in enumerate(grouped_documents):
-            is_ugm = is_ugm_format(doc_text) # Check UGM format on the full document
+            is_ugm = is_ugm_format(doc_text)
             letter_type = classify_document(doc_text)
             extracted_fields = detect_patterns(doc_text, letter_type)
             
+            # --- Load Ground Truth and Calculate Accuracy (for background_process) ---
+            doc_filename = os.path.basename(pdf_url) # Assuming this pdf_url leads to the original filename
+            ground_truth_data = load_ground_truth(doc_filename)
+
+            accuracy_metrics = {}
+            if ground_truth_data:
+                cer = calculate_cer(ground_truth_data.get('full_text', ''), doc_text)
+                wer = calculate_wer(ground_truth_data.get('full_text', ''), doc_text)
+                
+                overall_field_acc, individual_field_acc = calculate_field_accuracy(
+                    extracted_fields, ground_truth_data.get('extracted_fields', {})
+                )
+                
+                accuracy_metrics = {
+                    "cer": cer,
+                    "wer": wer,
+                    "overall_field_accuracy": overall_field_acc,
+                    "individual_field_accuracy": individual_field_acc
+                }
+            # --- End Accuracy Calculation ---
+
             all_processed_docs.append({
                 "document_index": i + 1,
                 "is_ugm_format": is_ugm,
                 "letter_type": letter_type,
                 "ocr_text": doc_text,
-                "extracted_fields": extracted_fields
+                "extracted_fields": extracted_fields,
+                "accuracy_metrics": accuracy_metrics # Add accuracy metrics here
             })
 
         new_path = pdf_url.split('suratMasuk/')[-1] if 'suratMasuk/' in pdf_url else os.path.basename(pdf_url)
@@ -289,7 +353,7 @@ def background_process(pdf_url, task_id):
             response = requests.post("http://127.0.0.1:8000/api/hook", json={
                 "task_id": task_id,
                 "pdf_url": new_path,
-                "processed_documents": all_processed_docs # Send info for all found docs
+                "processed_documents": all_processed_docs 
             }, headers=headers)
         
             print(f'Successfully sent results to Laravel. Status Code: {response.status_code}')
