@@ -185,56 +185,6 @@ def detect_patterns(text, letter_type):
 def index():
     return "Hello from Flask OCR!"
 
-@app.route("/process_pdf", methods=["POST"])
-def process_pdf():
-    data = request.get_json()
-    pdf_url = data.get("pdf_url")
-
-    if not pdf_url:
-        return jsonify({"success": False, "message": "Missing 'pdf_url'"}), 400
-
-    temp_dir = tempfile.mkdtemp()
-    try:
-        local_pdf_path = download_pdf(pdf_url, temp_dir)
-        images = convert_from_path(local_pdf_path, poppler_path=POPPLER)
-
-        for i, image in enumerate(images):
-            image.save(os.path.join(temp_dir, f"page_{i+1}.png"), "PNG")
-
-        # Step 1: Perform OCR to get text for each page
-        ocr_results_per_page = perform_ocr_and_get_page_texts(temp_dir)
-        
-        # Step 2: Group pages into logical documents
-        grouped_documents = group_pages(ocr_results_per_page)
-
-        processed_documents_info = []
-        for i, doc_text in enumerate(grouped_documents):
-            # Step 3: Process each grouped document
-            is_ugm = is_ugm_format(doc_text) # Check UGM format on the full document
-            letter_type = classify_document(doc_text)
-            extracted_fields = detect_patterns(doc_text, letter_type)
-            
-            processed_documents_info.append({
-                "document_index": i + 1,
-                "is_ugm_format": is_ugm,
-                "letter_type": letter_type,
-                "ocr_text": doc_text, # Full text of the grouped document
-                "extracted_fields": extracted_fields
-            })
-
-        return jsonify({
-            "success": True,
-            "message": "PDF processed and documents grouped.",
-            "total_documents_found": len(processed_documents_info),
-            "documents": processed_documents_info
-        }), 200
-
-    except Exception as e:
-        print(f"Error during PDF processing: {e}") # Log the error for debugging
-        return jsonify({"success": False, "message": str(e)}), 500
-    finally:
-        shutil.rmtree(temp_dir) # Clean up temporary directory
-
 @app.route("/submit_pdf", methods=["POST"])
 def submit_pdf():
     data = request.get_json()
@@ -247,7 +197,6 @@ def submit_pdf():
     Thread(target=background_process, args=(pdf_url, task_id)).start()
     return jsonify({"success": True, "message": "Job accepted and processing in background"}), 202
 
-# --- Modified background_process function ---
 def background_process(pdf_url, task_id):
     print(f'Starting background process for task_id: {task_id}')
     temp_dir = tempfile.mkdtemp()
