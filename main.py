@@ -17,12 +17,17 @@ app = Flask(__name__)
 
 # --- IMPORTANT: Configure these paths for your local setup ---
 # Path to the 'bin' directory of your Poppler installation
-POPPLER = r'/opt/local/bin' # You might need to change this!
+# Make sure Poppler is installed and configured correctly.
 # For Windows: POPPLER = r'C:\path\to\poppler-xxx\Library\bin'
+# For macOS/Linux: POPPLER = r'/opt/local/bin' or check your system's Poppler path
+POPPLER = r'/opt/local/bin' 
 
 # --- Path to your Ground Truth data ---
 # Pastikan direktori ini ada dan berisi file JSON ground truth Anda
-GROUND_TRUTH_DIR = './testing' # e.g., 'C:\my_ocr_project\ground_truth_data' or './ground_truth_data'
+# GROUND_TRUTH_DIR = './testing/keterangan' 
+# GROUND_TRUTH_DIR = './testing/permohonan' 
+# GROUND_TRUTH_DIR = './testing/tidak_diketahui' 
+GROUND_TRUTH_DIR = './testing/tugas' 
 
 # --- Keywords for document grouping ---
 TITLE_KEYWORDS = ["Surat Pernyataan", "Surat Tugas", "Surat Keterangan",
@@ -57,21 +62,38 @@ def group_pages(ocr_results_dict):
         grouped_docs.append(current_doc)
     return grouped_docs
 
-def download_pdf(pdf_url, output_dir):
-    local_pdf_path = os.path.join(output_dir, 'downloaded.pdf')
-    print(f"Attempting to download PDF from {pdf_url} to {local_pdf_path}") # Added print
-    try:
-        response = requests.get(pdf_url, stream=True)
-        response.raise_for_status() # Raises HTTPError for bad responses (4xx or 5xx)
-        with open(local_pdf_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=1024):
-                f.write(chunk)
-        print(f"PDF downloaded successfully to {local_pdf_path}") # Added print
+def download_pdf(pdf_path_or_url, output_dir):
+    """
+    Downloads PDF from a URL or copies from a local path.
+    Returns the local path of the PDF.
+    """
+    local_pdf_filename = os.path.basename(pdf_path_or_url) # Get filename from path/url
+    local_pdf_path = os.path.join(output_dir, local_pdf_filename)
+    
+    # Check if it's a URL (starts with http:// or https://)
+    if pdf_path_or_url.startswith(('http://', 'https://')):
+        print(f"Attempting to download PDF from {pdf_path_or_url} to {local_pdf_path}")
+        try:
+            response = requests.get(pdf_path_or_url, stream=True)
+            response.raise_for_status() # Raises HTTPError for bad responses (4xx or 5xx)
+            with open(local_pdf_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=1024):
+                    f.write(chunk)
+            print(f"PDF downloaded successfully to {local_pdf_path}")
+            return local_pdf_path
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Failed to download PDF from {pdf_path_or_url}: {e}")
+        except Exception as e:
+            raise Exception(f"An unexpected error occurred during PDF download: {e}")
+    else:
+        # Assume it's a local file path
+        if not os.path.exists(pdf_path_or_url):
+            raise FileNotFoundError(f"Local PDF file not found at: {pdf_path_or_url}")
+        print(f"Copying local PDF from {pdf_path_or_url} to {local_pdf_path}")
+        shutil.copy(pdf_path_or_url, local_pdf_path)
+        print(f"PDF copied successfully to {local_pdf_path}")
         return local_pdf_path
-    except requests.exceptions.RequestException as e:
-        raise Exception(f"Failed to download PDF from {pdf_url}: {e}")
-    except Exception as e:
-        raise Exception(f"An unexpected error occurred during PDF download: {e}")
+
 
 def perform_ocr_and_get_page_texts(image_dir):
     """Performs OCR on images and returns a dictionary of page_path: text."""
@@ -94,12 +116,12 @@ def is_ugm_format(ocr_text):
 
 def classify_document(ocr_text):
     patterns = {
-        "surat_tugas": r"(?i)\b(surat tugas|yang bertanda tangan.*memberikan tugas kepada)\b",
-        "surat_keterangan": r"(?i)\b(surat keterangan)\b",
-        "surat_permohonan": r"(?i)\b(permohonan|sehubungan dengan.*terima kasih)\b",
+        "surat_tugas": r"(?i)(surat tugas|yang bertanda tangan.*memberikan tugas kepada)",
+        "surat_keterangan": r"(?i)(surat keterangan)",
+        "surat_permohonan": r"(?i)(permohonan|sehubungan dengan.*terima kasih)",
     }
     for category, pattern in patterns.items():
-        if re.search(pattern, ocr_text, re.IGNORECASE):
+        if re.search(pattern, ocr_text, re.IGNORECASE | re.DOTALL):
             return category.title().replace("_", " ")
     return "Tidak Diketahui"
 
@@ -108,25 +130,25 @@ def detect_patterns(text, letter_type):
         "Surat Permohonan": {
             "nomor_surat": r"(\d+/UN[1I]/?([A-Z0-9.-]+\/){1,3}\d{4})", 
             "isi_surat": r"((?:Dengan hormat|Sehubungan dengan).*?terima kasih)",
-            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
+            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
             "penerima_surat": r"Yth\.\s*(.*?)\s*Dengan", 
             "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         },
         "Surat Tugas": { 
             "nomor_surat": r"(\d+/UN[1I]/?([A-Z0-9.-]+\/){1,3}\d{4})", 
             "isi_surat": r"((?:Yang bertanda tangan|Yang bertandatangan).*?(?:mestinya|semestinya)\.)",
-            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
+            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
             "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         },
         "Surat Keterangan": { 
            "nomor_surat": r"(\d+/UN[1I]/?([A-Z0-9.-]+\/){1,3}\d{4})", 
             "isi_surat": r"((?:Yang bertanda tangan|Yang bertandatangan).*?(?:mestinya|semestinya)\.)",
-            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
+            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
             "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         },
         "default": {
             "nomor_surat": r"(\d+/UN[1I]/?([A-Z0-9.-]+\/){1,3}\d{4})", 
-            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
+            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
             "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         }
     }
@@ -157,12 +179,10 @@ def detect_patterns(text, letter_type):
 # --- Accuracy Calculation Functions ---
 def load_ground_truth(doc_filename):
     """Loads ground truth data for a given document filename."""
-    # Ensure doc_filename is just the basename (e.g., 'document.pdf' not full URL)
-    # And convert .pdf to .json for the ground truth file
     base_filename = os.path.basename(doc_filename).replace('.pdf', '.json')
     gt_path = os.path.join(GROUND_TRUTH_DIR, base_filename)
     
-    print(f"Attempting to load ground truth from: {gt_path}") # Added print
+    print(f"Attempting to load ground truth from: {gt_path}")
     if os.path.exists(gt_path):
         try:
             with open(gt_path, 'r', encoding='utf-8') as f:
@@ -201,17 +221,15 @@ def calculate_field_accuracy(predicted_fields, ground_truth_fields):
     total_fields_to_check = 0
     correctly_extracted_fields = 0
 
-    # Ensure ground_truth_fields is treated as a dict
-    # If it's a string, try to parse it. If parsing fails, treat as empty.
     if isinstance(ground_truth_fields, str):
         try:
             ground_truth_fields = json.loads(ground_truth_fields)
         except json.JSONDecodeError:
-            ground_truth_fields = {} # Fallback if not valid JSON string
+            ground_truth_fields = {}
 
     for field_name, gt_value in ground_truth_fields.items():
-        total_fields_to_check += 1 # Count every field present in ground truth
-        predicted_data = predicted_fields.get(field_name) # Get the dict for predicted field
+        total_fields_to_check += 1
+        predicted_data = predicted_fields.get(field_name)
 
         if predicted_data and 'text' in predicted_data:
             predicted_value = predicted_data['text']
@@ -224,19 +242,18 @@ def calculate_field_accuracy(predicted_fields, ground_truth_fields):
             if is_correct:
                 correctly_extracted_fields += 1
         else:
-            # Field not predicted or 'text' key missing in prediction
             field_accuracies[field_name] = {
                 "correct": False,
                 "predicted": None,
                 "ground_truth": gt_value,
-                "status": "Not Extracted" # Added status for clarity
+                "status": "Not Extracted"
             }
     
     overall_field_accuracy = (correctly_extracted_fields / total_fields_to_check) * 100 if total_fields_to_check > 0 else 0.0
     
     return overall_field_accuracy, field_accuracies
 
-# --- Flask Routes ---
+# --- Flask Routes (These remain for the API functionality, but are not used in direct local testing) ---
 
 @app.route("/")
 def index():
@@ -246,21 +263,26 @@ def index():
 def submit_pdf():
     data = request.get_json()
     task_id = data.get("task_id")
-    pdf_url = data.get("pdf_url")
+    pdf_url = data.get("pdf_url") # This would be a local path in your scenario
 
     if not pdf_url or not task_id:
         return jsonify({"success": False, "message": "Missing 'pdf_url' or 'task_id'"}), 400
 
-    # It's better to pass the ground truth filename/ID if you want accuracy in background
     Thread(target=background_process, args=(pdf_url, task_id)).start()
     return jsonify({"success": True, "message": "Job accepted and processing in background"}), 202
 
 # --- Modified background_process function with print formatting ---
-def background_process(pdf_url, task_id):
-    print(f'Starting background process for task_id: {task_id}')
+def background_process(pdf_path_or_url, task_id):
+    """
+    Processes a PDF file (either local path or URL) and performs OCR,
+    document classification, and accuracy calculation.
+    Prints the testing results to the console.
+    """
+    print(f'Starting OCR process for task_id: {task_id} with PDF: {pdf_path_or_url}')
     temp_dir = tempfile.mkdtemp()
     try:
-        local_pdf_path = download_pdf(pdf_url, temp_dir)
+        # Now download_pdf handles both local paths and URLs
+        local_pdf_path = download_pdf(pdf_path_or_url, temp_dir)
         images = convert_from_path(local_pdf_path, poppler_path=POPPLER)
 
         for i, image in enumerate(images):
@@ -273,28 +295,27 @@ def background_process(pdf_url, task_id):
         for i, doc_text in enumerate(grouped_documents):
             is_ugm = is_ugm_format(doc_text)
             letter_type = classify_document(doc_text)
+            print("------- type : ", letter_type)
             extracted_fields = detect_patterns(doc_text, letter_type)
             
-            # Use local_pdf_path basename for load_ground_truth as it reflects the original file name
             ground_truth_data = load_ground_truth(os.path.basename(local_pdf_path)) 
 
             accuracy_metrics = {}
             if ground_truth_data:
                 # --- START: Output Format for OCR Testing Results ---
-                print("\n" + "="*70) # Wider separator
+                print("\n" + "="*70)
                 print(f"Pengujian Dokumen #{i+1} dari {os.path.basename(local_pdf_path)}")
                 print("="*70)
 
-                # Get ground truth full text, default to empty string if not found
                 gt_full_text = ground_truth_data.get('full_text', '')
                 
                 print("\n[ Teks Asli (Ground Truth) ]")
-                print("-" * 35) # Adjusted width
+                print("-" * 35)
                 print(gt_full_text if gt_full_text else 'Tidak ada teks asli ditemukan dalam Ground Truth.')
                 print("-" * 35)
 
                 print("\n[ Teks Hasil OCR ]")
-                print("-" * 35) # Adjusted width
+                print("-" * 35)
                 print(repr(doc_text) if doc_text else 'Tidak ada teks hasil OCR.')
                 print("-" * 35)
 
@@ -309,20 +330,20 @@ def background_process(pdf_url, task_id):
                     "cer": cer,
                     "wer": wer,
                     "overall_field_accuracy": overall_field_acc,
-                    "individual_field_accuracy": individual_field_acc_details # Store full details
+                    "individual_field_accuracy": individual_field_acc_details
                 }
 
                 print("\n[ Metrik Akurasi ]")
-                print("-" * 35) # Adjusted width
-                print(f"  Character Error Rate (CER):        {accuracy_metrics['cer'] * 100:.2f}%") # Multiply by 100 and format to 2 decimal places
-                print(f"  Word Error Rate (WER):             {accuracy_metrics['wer'] * 100:.2f}%")   # Multiply by 100 and format to 2 decimal places
+                print("-" * 35)
+                print(f"  Character Error Rate (CER):        {accuracy_metrics['cer'] * 100:.2f}%")
+                print(f"  Word Error Rate (WER):             {accuracy_metrics['wer'] * 100:.2f}%")
                 print(f"  Akurasi Ekstraksi Field Keseluruhan: {accuracy_metrics['overall_field_accuracy']:.2f}%")
                 
                 print("\n  Detail Akurasi Field Individual:")
                 if accuracy_metrics['individual_field_accuracy']:
                     for field, details in accuracy_metrics['individual_field_accuracy'].items():
                         status = "Match" if details['correct'] else "Mismatch"
-                        if 'status' in details: # For "Not Extracted"
+                        if 'status' in details:
                             status = details['status']
 
                         predicted_val_display = f"'{details['predicted']}'" if details['predicted'] is not None else "N/A"
@@ -332,11 +353,11 @@ def background_process(pdf_url, task_id):
                             print(f"    - {field}: {status} (Value: {predicted_val_display})")
                         elif status == "Mismatch":
                             print(f"    - {field}: {status} (Expected: {gt_val_display}, Got: {predicted_val_display})")
-                        else: # Not Extracted
+                        else:
                             print(f"    - {field}: {status} (Expected: {gt_val_display})")
                 else:
                     print("    Tidak ada field yang diekstrak atau dicocokkan dari Ground Truth.")
-                print("-" * 35) # Adjusted width
+                print("-" * 35)
                 print("="*70 + "\n")
                 # --- END: Output Format for OCR Testing Results ---
 
@@ -349,35 +370,77 @@ def background_process(pdf_url, task_id):
                 "accuracy_metrics": accuracy_metrics 
             })
 
-        # The new_path variable is for the Laravel hook, not directly related to print
-        new_path = pdf_url.split('suratMasuk/')[-1] if 'suratMasuk/' in pdf_url else os.path.basename(pdf_url)
+        # Removed the Laravel hook part here since you don't want to connect to Laravel.
+        # If you still want to send data somewhere else, you'd add that logic here.
 
-        headers = {
-            'Content-Type': 'application/json',  
-            'Accept': 'application/json'         
-        }
-        try:
-            response = requests.post("http://127.0.0.1:8000/api/hook", json={
-                "task_id": task_id,
-                "pdf_url": new_path,
-                "processed_documents": all_processed_docs 
-            }, headers=headers)
-        
-            print(f'Successfully sent results to Laravel. Status Code: {response.status_code}')
-        except Exception as e:
-            print(f"Failed to send results to Laravel: {e}")
     except Exception as e:
         print(f"Error in background_process for task_id {task_id}: {e}")
     finally:
         shutil.rmtree(temp_dir)
 
 if __name__ == "__main__":
-    # Example usage (for local testing, you might need a dummy PDF and ground truth JSON)
-    # Ensure GROUND_TRUTH_DIR exists and contains 'downloaded.json' if you use the dummy_pdf_url
-    # dummy_pdf_url = "http://localhost:3000/dummy.pdf" # Replace with a real accessible PDF URL
-    # with open("dummy.pdf", "w") as f: f.write("dummy content") # Create a dummy file for testing download
-    # if not os.path.exists(GROUND_TRUTH_DIR): os.makedirs(GROUND_TRUTH_DIR)
-    # with open(os.path.join(GROUND_TRUTH_DIR, "downloaded.json"), "w") as f:
-    #     json.dump({"full_text": "Ini adalah teks asli yang harus dicocokkan.", "extracted_fields": {"nama": "Budi", "nim": "123456"}}, f)
+    # --- IMPORTANT: Konfigurasi untuk Pengujian Lokal ---
+    # 1. Pastikan Poppler terinstal dan POPPLER path diatur dengan benar di bagian atas kode.
+    # 2. Buat direktori 'testing' di lokasi yang sama dengan script Python ini.
+    # 3. Letakkan file PDF yang ingin Anda uji di suatu lokasi.
+    # 4. Untuk setiap file PDF, buat file JSON ground truth yang sesuai di direktori 'testing'.
+    #    Nama file JSON harus sama dengan nama file PDF, tetapi dengan ekstensi '.json'.
+    #    Contoh: 'surat_tugas_01.pdf' -> 'surat_tugas_01.json'
 
-    app.run(host="0.0.0.0", port=3000, debug=True, threaded=True)
+    # Contoh struktur file JSON ground truth (misal untuk 'surat_tugas_01.json'):
+    # {
+    #   "full_text": "Teks lengkap dari surat tugas ini sesuai aslinya untuk CER/WER.",
+    #   "extracted_fields": {
+    #     "nomor_surat": "123/UN1/SK/2023",
+    #     "tanggal": "Yogyakarta, 10 Juli 2024",
+    #     "ttd_surat": "Prof. Dr. Nama Pejabat, M.Sc."
+    #     # Tambahkan field lain yang relevan yang Anda ekstrak dan ingin validasi
+    #   }
+    # }
+
+    # Contoh penggunaan:
+    # Ganti 'path/to/your/local_document.pdf' dengan jalur PDF aktual Anda.
+    # Anda bisa menambahkan beberapa file PDF untuk diuji secara berurutan.
+    
+    # Pastikan direktori GROUND_TRUTH_DIR ada
+    if not os.path.exists(GROUND_TRUTH_DIR):
+        os.makedirs(GROUND_TRUTH_DIR)
+        print(f"Created ground truth directory: {GROUND_TRUTH_DIR}")
+
+    # SURAT PERMOHONAN
+    # pdf_files_to_test = [
+        # r'./file_pdf/permohonan/23774.pdf',
+        # r'./file_pdf/permohonan/20250124_083609.pdf',
+        # r'./file_pdf/permohonan/Scan.pdf',
+        # r'./file_pdf/permohonan/Pengantar Penelitian PA John Feri Jr. Ramadhan TRPL.pdf',
+        # r'./file_pdf/permohonan/Pengantar PI  M.Reynaldi Maso dkk TRIK.pdf',
+    # ]
+    # SURAT TUGAS
+    pdf_files_to_test = [
+        # r'./file_pdf/tugas/5163 Surat Tugas MTQMN 3-10 November 2023.pdf',
+        r'./file_pdf/tugas/Surat Tugas MAGANG  Sigit Yunianto TRE.pdf',
+        r'./file_pdf/tugas/20250124_083620.pdf',
+        # r'./file_pdf/tugas/Surat Tugas MAGANG Rosus Pangaribowo dkk TRE-1.pdf',
+        # r'./file_pdf/tugas/Surat Tugas MAGANG Rosus Pangaribowo dkk TRE-2.pdf',
+    ]
+    
+    # --- PENTING: Ganti baris di bawah ini dengan file PDF yang ingin Anda uji! ---
+    # Contoh:
+    # pdf_files_to_test.append('./sample_documents/sample_surat_tugas.pdf')
+    # Pastikan Anda memiliki './sample_documents/sample_surat_tugas.pdf' dan 
+    # './testing/sample_surat_tugas.json' (sesuaikan nama file ground truth)
+
+    if not pdf_files_to_test:
+        print("Tidak ada file PDF yang dikonfigurasi untuk pengujian. Silakan tambahkan path PDF ke 'pdf_files_to_test'.")
+    else:
+        for i, pdf_path in enumerate(pdf_files_to_test):
+            print(f"\n--- Memulai Pengujian untuk PDF: {pdf_path} ---")
+            # Jalankan background_process secara langsung untuk pengujian lokal
+            # Gunakan task_id unik untuk setiap pengujian jika Anda ingin melacaknya
+            background_process(pdf_path, f"local_test_{i+1}")
+            print(f"--- Pengujian Selesai untuk PDF: {pdf_path} ---\n")
+
+    # Anda tidak perlu menjalankan Flask app jika Anda hanya ingin menjalankan pengujian OCR.
+    # Jika Anda ingin tetap menjalankan Flask API (tanpa koneksi Laravel) untuk tujuan lain,
+    # biarkan baris di bawah ini tidak dikomentari.
+    # app.run(host="0.0.0.0", port=3000, debug=True, threaded=True)
