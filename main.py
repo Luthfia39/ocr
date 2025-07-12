@@ -24,10 +24,10 @@ POPPLER = r'/opt/local/bin'
 
 # --- Path to your Ground Truth data ---
 # Pastikan direktori ini ada dan berisi file JSON ground truth Anda
-# GROUND_TRUTH_DIR = './testing/keterangan' 
+GROUND_TRUTH_DIR = './testing/keterangan' 
 # GROUND_TRUTH_DIR = './testing/permohonan' 
 # GROUND_TRUTH_DIR = './testing/tidak_diketahui' 
-GROUND_TRUTH_DIR = './testing/tugas' 
+# GROUND_TRUTH_DIR = './testing/tugas' 
 
 # --- Keywords for document grouping ---
 TITLE_KEYWORDS = ["Surat Pernyataan", "Surat Tugas", "Surat Keterangan",
@@ -407,22 +407,38 @@ if __name__ == "__main__":
         os.makedirs(GROUND_TRUTH_DIR)
         print(f"Created ground truth directory: {GROUND_TRUTH_DIR}")
 
-    # SURAT PERMOHONAN
+    # ---------------- SURAT PERMOHONAN -------------------------
     # pdf_files_to_test = [
-        # r'./file_pdf/permohonan/23774.pdf',
-        # r'./file_pdf/permohonan/20250124_083609.pdf',
-        # r'./file_pdf/permohonan/Scan.pdf',
-        # r'./file_pdf/permohonan/Pengantar Penelitian PA John Feri Jr. Ramadhan TRPL.pdf',
-        # r'./file_pdf/permohonan/Pengantar PI  M.Reynaldi Maso dkk TRIK.pdf',
+    #     r'./file_pdf/permohonan/23774.pdf',
+    #     r'./file_pdf/permohonan/20250124_083609.pdf',
+    #     r'./file_pdf/permohonan/Scan.pdf',
+    #     r'./file_pdf/permohonan/Pengantar Penelitian PA John Feri Jr. Ramadhan TRPL.pdf',
+    #     r'./file_pdf/permohonan/Pengantar PI  M.Reynaldi Maso dkk TRIK.pdf',
     # ]
-    # SURAT TUGAS
+    # ---------------- SURAT TUGAS -------------------------
+    # pdf_files_to_test = [
+    #     r'./file_pdf/tugas/5163 Surat Tugas MTQMN 3-10 November 2023.pdf',
+    #     r'./file_pdf/tugas/Surat Tugas MAGANG  Sigit Yunianto TRE.pdf',
+    #     r'./file_pdf/tugas/20250124_083620.pdf',
+    #     r'./file_pdf/tugas/Surat Tugas MAGANG Rosus Pangaribowo dkk TRE-1.pdf',
+    #     r'./file_pdf/tugas/Surat Tugas MAGANG Rosus Pangaribowo dkk TRE-2.pdf',
+    # ]
+    # ---------------- SURAT KETERANGAN -------------------------
     pdf_files_to_test = [
-        # r'./file_pdf/tugas/5163 Surat Tugas MTQMN 3-10 November 2023.pdf',
-        r'./file_pdf/tugas/Surat Tugas MAGANG  Sigit Yunianto TRE.pdf',
-        r'./file_pdf/tugas/20250124_083620.pdf',
-        # r'./file_pdf/tugas/Surat Tugas MAGANG Rosus Pangaribowo dkk TRE-1.pdf',
-        # r'./file_pdf/tugas/Surat Tugas MAGANG Rosus Pangaribowo dkk TRE-2.pdf',
+        r'./file_pdf/keterangan/SKAK an.Devina Dwiyanti.pdf',
+        r'./file_pdf/keterangan/8 - Surat Aktif Adiyatma Hilmy.pdf',
+        r'./file_pdf/keterangan/2025-04_479064_345_Ridha_Fauziyya_Rahma_24_Genap (1).pdf',
+        r'./file_pdf/keterangan/20250212_144606.pdf',
+        r'./file_pdf/keterangan/SKAK an.Alya Zakhira Anjani-paraf (1).pdf',
     ]
+    # ---------------- TIDAK TERKLASIFIKASI -------------------------
+    # pdf_files_to_test = [
+        # r'./file_pdf/tidak_diketahui/Surat Edaran Peringatan Peniupuan Mengatasnamakan Pimpinan UGM.pdf',
+        # r'./file_pdf/tidak_diketahui/BA Pendadaran  an. ALYA ZAKHIRA ANJANI.xlsx - Undangan.pdf',
+        # r'./file_pdf/tidak_diketahui/Surat Rekomendasi Program Magenta Dicky Ardiansyah Pramana Putra,2 (1) (2).pdf',
+        # r'./file_pdf/tidak_diketahui/Surat Rekomendasi BEM KM SV UGM.pdf',
+        # r'./file_pdf/tidak_diketahui/Surat Rekomendasi_Vellya Riona.pdf',
+    # ]
     
     # --- PENTING: Ganti baris di bawah ini dengan file PDF yang ingin Anda uji! ---
     # Contoh:
