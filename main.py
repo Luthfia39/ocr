@@ -7,7 +7,9 @@ import tempfile
 import requests
 import pytesseract
 import cv2
-import editdistance # Make sure to install: pip install editdistance
+import editdistance 
+from kbbi import KBBI
+import unicodedata
 
 from flask import Flask, request, jsonify
 from pdf2image import convert_from_path
@@ -36,6 +38,77 @@ TITLE_KEYWORDS = ["Surat Pernyataan", "Surat Tugas", "Surat Keterangan",
 
 SALUTATION_KEYWORDS = ["Yth.", "Yang Terhormat", "Kepada"]
 REGULATION_KEYWORDS = ["Keputusan tentang", "Peraturan tentang", "No."]
+
+# --- Inisialisasi KBBI (tetap di awal aplikasi) ---
+KBBI_ENGINE = None
+try:
+    # Coba lakukan pencarian dummy untuk memicu koneksi awal dan memastikan inisialisasi sukses
+    _ = KBBI('contoh')
+    KBBI_ENGINE = KBBI
+    print("KBBI berhasil diinisialisasi dan siap digunakan.")
+except Exception as e:
+    print(f"Peringatan: Gagal menginisialisasi KBBI atau koneksi bermasalah: {e}")
+    print("Fungsi normalisasi/sinonim KBBI mungkin tidak bekerja.")
+
+# --- Fungsi Bantuan Tesaurus ---
+def get_all_forms_from_kbbi(base_term):
+    """
+    Mengembalikan daftar semua bentuk kata/frasa (termasuk kata dasar dan sinonimnya)
+    menggunakan kbbi-python. Mengembalikan [base_term] jika KBBI tidak tersedia atau ada error.
+    """
+    if KBBI_ENGINE is None:
+        return [base_term] # Fallback jika KBBI tidak terinisialisasi atau koneksi gagal
+
+    synonyms = []
+    try:
+        # Cari kata di KBBI
+        result = KBBI_ENGINE(base_term.lower()) # Cari dengan huruf kecil untuk konsistensi
+        
+        # Tambahkan lema utama jika ada
+        if result and hasattr(result, 'lema') and result.lema:
+            synonyms.append(result.lema.lower())
+
+        # Tambahkan sinonim jika ada
+        if result and hasattr(result, 'sinonim') and result.sinonim:
+            synonyms.extend([s.lower() for s in result.sinonim])
+            
+        # Hapus duplikat dan pastikan unik
+        synonyms = list(set(synonyms))
+        
+        # Tambahkan kata dasar itu sendiri ke daftar jika belum ada
+        if base_term.lower() not in synonyms:
+            synonyms.insert(0, base_term.lower()) # Prioritaskan kata dasar
+            
+    except Exception as e:
+        # print(f"Error saat mencari sinonim '{base_term}' di KBBI: {e}") # Bisa di-uncomment untuk debugging
+        synonyms = [base_term.lower()] # Fallback ke kata dasar jika ada error
+
+    return synonyms
+
+# --- Fungsi Pra-pemrosesan Teks Baru ---
+def normalize_text_with_thesaurus(text):
+    """
+    Melakukan normalisasi teks dasar menggunakan tesaurus/KBBI.
+    Ini adalah implementasi sederhana untuk contoh.
+    Untuk produksi, butuh spell checker dan logic yang lebih robust.
+    """
+    if not KBBI_ENGINE:
+        return text # Jika KBBI tidak aktif, kembalikan teks asli
+
+    normalized_words = []
+    # Tokenisasi teks menjadi kata-kata. Lebih baik pakai pustaka NLP seperti NLTK/SpaCy untuk ini
+    words = re.findall(r'\b\w+\b', text.lower()) # Ambil semua kata, ubah ke lowercase
+
+    for word in words:
+        # Contoh sederhana: Coba cari sinonim. Jika ada, gunakan lema utama/bentuk standar.
+        # Ini BUKAN spell checker penuh, hanya menunjukkan bagaimana tesaurus bisa membantu.
+        found_forms = get_all_forms_from_kbbi(word)
+        if word in found_forms and found_forms[0] != word: # Jika kata dasar punya sinonim dan bukan kata itu sendiri
+            normalized_words.append(found_forms[0]) # Gunakan bentuk standar/lema dari tesaurus
+        else:
+            normalized_words.append(word) # Pertahankan kata asli
+
+    return ' '.join(normalized_words)
 
 # --- Helper Functions (Existing functions remain, no core logic changes) ---
 def is_new_document(text):
@@ -115,45 +188,70 @@ def is_ugm_format(ocr_text):
     return "universitas gadjah mada" in ocr_text[:500].lower()
 
 def classify_document(ocr_text):
+    # Sekarang, ocr_text yang masuk ke sini sudah bisa diasumsikan lebih bersih dari normalize_text_with_thesaurus
+    # Namun, untuk akurasi lebih, kita tetap bisa pakai sinonim di regex
+    surat_tugas_forms = get_all_forms_from_kbbi("surat tugas")
+    surat_keterangan_forms = get_all_forms_from_kbbi("surat keterangan")
+    surat_permohonan_forms = get_all_forms_from_kbbi("surat permohonan")
+
     patterns = {
-        "surat_tugas": r"(?i)(surat tugas|yang bertanda tangan.*memberikan tugas kepada)",
-        "surat_keterangan": r"(?i)(surat keterangan)",
-        "surat_permohonan": r"(?i)(permohonan|sehubungan dengan.*terima kasih)",
+        "surat_tugas": r"(?i)\b(" + "|".join(re.escape(s) for s in surat_tugas_forms) + r")\b",
+        "surat_keterangan": r"(?i)\b(" + "|".join(re.escape(s) for s in surat_keterangan_forms) + r")\b",
+        "surat_permohonan": r"(?i)\b(" + "|".join(re.escape(s) for s in surat_permohonan_forms) + r")\b",
     }
+
     for category, pattern in patterns.items():
-        if re.search(pattern, ocr_text, re.IGNORECASE | re.DOTALL):
+        if re.search(pattern, ocr_text, re.IGNORECASE):
             return category.title().replace("_", " ")
+    print('Document type classified as "Tidak Diketahui".')
     return "Tidak Diketahui"
 
+
+# Fungsi detect_patterns juga sama, beroperasi pada teks yang sudah dinormalisasi dan menggunakan sinonim di regex
 def detect_patterns(text, letter_type):
+    nomor_surat_keywords = get_all_forms_from_kbbi("nomor")
+    isi_surat_keywords = get_all_forms_from_kbbi("dengan hormat")
+    penerima_surat_keywords = get_all_forms_from_kbbi("yth")
+    tanggal_keywords = get_all_forms_from_kbbi("tanggal")
+
+    base_patterns = {
+        "nomor_surat": r"(?i)\b(" + "|".join(re.escape(s) for s in nomor_surat_keywords) + r")\s*[:]?\s*(\d+/UN[1I][A-Z0-9.-]*\/[A-Z0-9.-]+\/[A-Z]+\/[A-Z]+\/\d{4})",
+        "isi_surat": r"((?:" + "|".join(re.escape(s) for s in isi_surat_keywords) + r").*?terima kasih)",
+        "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
+        "penerima_surat": r"(?:" + "|".join(re.escape(s) for s in penerima_surat_keywords) + r")\s*(.*?)\s*(?:Dengan|Hormat)",
+        "tanggal": r"(?i)\b(" + "|".join(re.escape(s) for s in tanggal_keywords) + r")[:]?\s*([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
+    }
+
     patterns = {
         "Surat Permohonan": {
-            "nomor_surat": r"(\d+/UN[1I]/?([A-Z0-9.-]+\/){1,3}\d{4})", 
-            "isi_surat": r"((?:Dengan hormat|Sehubungan dengan).*?terima kasih)",
-            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
-            "penerima_surat": r"Yth\.\s*(.*?)\s*Dengan", 
-            "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
+            "nomor_surat": base_patterns["nomor_surat"],
+            "isi_surat": base_patterns["isi_surat"],
+            "ttd_surat": base_patterns["ttd_surat"],
+            "penerima_surat": base_patterns["penerima_surat"],
+            "tanggal": base_patterns["tanggal"]
         },
-        "Surat Tugas": { 
-            "nomor_surat": r"(\d+/UN[1I]/?([A-Z0-9.-]+\/){1,3}\d{4})", 
-            "isi_surat": r"((?:Yang bertanda tangan|Yang bertandatangan).*?(?:mestinya|semestinya)\.)",
-            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
-            "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
+        "Surat Tugas": {
+            "nomor_surat": base_patterns["nomor_surat"],
+            "isi_surat": r"(Yang bertanda tangan.*?(?:mestinya|semestinya)\.)",
+            "ttd_surat": base_patterns["ttd_surat"],
+            "tanggal": base_patterns["tanggal"]
         },
-        "Surat Keterangan": { 
-           "nomor_surat": r"(\d+/UN[1I]/?([A-Z0-9.-]+\/){1,3}\d{4})", 
-            "isi_surat": r"((?:Yang bertanda tangan|Yang bertandatangan).*?(?:mestinya|semestinya)\.)",
-            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
-            "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
+        "Surat Keterangan": {
+           "nomor_surat": base_patterns["nomor_surat"],
+            "isi_surat": r"(Yang bertanda tangan.*?(?:mestinya|semestinya)\.)",
+            "ttd_surat": base_patterns["ttd_surat"],
+            "tanggal": base_patterns["tanggal"]
         },
         "default": {
-            "nomor_surat": r"(\d+/UN[1I]/?([A-Z0-9.-]+\/){1,3}\d{4})", 
-            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
-            "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
+            "nomor_surat": base_patterns["nomor_surat"],
+            "ttd_surat": base_patterns["ttd_surat"],
+            "tanggal": base_patterns["tanggal"]
         }
     }
+
     result = {}
     pattern_set = patterns.get(letter_type, patterns["default"])
+
     for key, regex in pattern_set.items():
         match = re.search(regex, text, flags=re.IGNORECASE | re.DOTALL)
         if match:
@@ -169,11 +267,14 @@ def detect_patterns(text, letter_type):
                 full_match_text = match.group(1).strip()
                 start_pos = match.start(1)
                 length = len(full_match_text)
+
             result[key] = {
                 'text': full_match_text,
                 'start': start_pos,
                 'length': length
             }
+
+    print('Patterns detected.')
     return result
 
 # --- Accuracy Calculation Functions ---
@@ -281,7 +382,6 @@ def background_process(pdf_path_or_url, task_id):
     print(f'Starting OCR process for task_id: {task_id} with PDF: {pdf_path_or_url}')
     temp_dir = tempfile.mkdtemp()
     try:
-        # Now download_pdf handles both local paths and URLs
         local_pdf_path = download_pdf(pdf_path_or_url, temp_dir)
         images = convert_from_path(local_pdf_path, poppler_path=POPPLER)
 
@@ -292,11 +392,17 @@ def background_process(pdf_path_or_url, task_id):
         grouped_documents = group_pages(ocr_results_per_page)
 
         all_processed_docs = []
-        for i, doc_text in enumerate(grouped_documents):
-            is_ugm = is_ugm_format(doc_text)
-            letter_type = classify_document(doc_text)
+        for i, doc_text_original in enumerate(grouped_documents):
+            # --- Perubahan di sini: Normalisasi Teks menggunakan KBBI ---
+            doc_text_normalized = normalize_text_with_thesaurus(doc_text_original)
+            print(f"\n[ Teks Asli (Setelah Grouping) ]:\n{doc_text_original[:200]}...") # Print sebagian
+            print(f"\n[ Teks Hasil Normalisasi KBBI ]:\n{doc_text_normalized[:200]}...") # Print sebagian
+            
+            # --- Gunakan teks yang sudah dinormalisasi untuk proses selanjutnya ---
+            is_ugm = is_ugm_format(doc_text_normalized)
+            letter_type = classify_document(doc_text_normalized)
             print("------- type : ", letter_type)
-            extracted_fields = detect_patterns(doc_text, letter_type)
+            extracted_fields = detect_patterns(doc_text_normalized, letter_type)
             
             ground_truth_data = load_ground_truth(os.path.basename(local_pdf_path)) 
 
@@ -314,13 +420,20 @@ def background_process(pdf_path_or_url, task_id):
                 print(gt_full_text if gt_full_text else 'Tidak ada teks asli ditemukan dalam Ground Truth.')
                 print("-" * 35)
 
-                print("\n[ Teks Hasil OCR ]")
+                print("\n[ Teks Hasil OCR (Original) ]")
                 print("-" * 35)
-                print(repr(doc_text) if doc_text else 'Tidak ada teks hasil OCR.')
+                print(repr(doc_text_original) if doc_text_original else 'Tidak ada teks hasil OCR.')
                 print("-" * 35)
 
-                cer = calculate_cer(gt_full_text, doc_text)
-                wer = calculate_wer(gt_full_text, doc_text)
+                print("\n[ Teks Hasil OCR (Normalized) ]") # Tampilkan teks yang dinormalisasi juga
+                print("-" * 35)
+                print(repr(doc_text_normalized) if doc_text_normalized else 'Tidak ada teks hasil OCR yang dinormalisasi.')
+                print("-" * 35)
+
+                # Hitung CER/WER dengan teks normalisasi jika ground truth juga normal
+                # Atau, bandingkan teks OCR asli dengan ground truth, tergantung metodologi Anda
+                cer = calculate_cer(gt_full_text, doc_text_original) # Bandingkan original dengan GT
+                wer = calculate_wer(gt_full_text, doc_text_original) # Bandingkan original dengan GT
                 
                 overall_field_acc, individual_field_acc_details = calculate_field_accuracy(
                     extracted_fields, ground_truth_data.get('extracted_fields', {})
@@ -365,13 +478,11 @@ def background_process(pdf_path_or_url, task_id):
                 "document_index": i + 1,
                 "is_ugm_format": is_ugm,
                 "letter_type": letter_type,
-                "ocr_text": doc_text,
+                "ocr_text_original": doc_text_original, # Simpan teks asli
+                "ocr_text_normalized": doc_text_normalized, # Simpan teks yang sudah dinormalisasi
                 "extracted_fields": extracted_fields,
                 "accuracy_metrics": accuracy_metrics 
             })
-
-        # Removed the Laravel hook part here since you don't want to connect to Laravel.
-        # If you still want to send data somewhere else, you'd add that logic here.
 
     except Exception as e:
         print(f"Error in background_process for task_id {task_id}: {e}")
@@ -426,10 +537,10 @@ if __name__ == "__main__":
     # ---------------- SURAT KETERANGAN -------------------------
     pdf_files_to_test = [
         r'./file_pdf/keterangan/SKAK an.Devina Dwiyanti.pdf',
-        r'./file_pdf/keterangan/8 - Surat Aktif Adiyatma Hilmy.pdf',
-        r'./file_pdf/keterangan/2025-04_479064_345_Ridha_Fauziyya_Rahma_24_Genap (1).pdf',
-        r'./file_pdf/keterangan/20250212_144606.pdf',
-        r'./file_pdf/keterangan/SKAK an.Alya Zakhira Anjani-paraf (1).pdf',
+        # r'./file_pdf/keterangan/8 - Surat Aktif Adiyatma Hilmy.pdf',
+        # r'./file_pdf/keterangan/2025-04_479064_345_Ridha_Fauziyya_Rahma_24_Genap (1).pdf',
+        # r'./file_pdf/keterangan/20250212_144606.pdf',
+        # r'./file_pdf/keterangan/SKAK an.Alya Zakhira Anjani-paraf (1).pdf',
     ]
     # ---------------- TIDAK TERKLASIFIKASI -------------------------
     # pdf_files_to_test = [
