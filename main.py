@@ -19,10 +19,7 @@ app = Flask(__name__)
 # Example for Windows: POPPLER = r'C:\Program Files\poppler-0.68.0\bin'
 # Example for macOS (might vary): POPPLER = r'/opt/homebrew/bin' or r'/usr/local/opt/poppler/bin'
 # Example for Linux (often /usr/bin or /usr/local/bin, but check your system):
-POPPLER = r'/opt/local/bin' # You might need to change this!
-
-# If Tesseract isn't in your PATH, you might need to specify its path here:
-# pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe' # Example for Windows
+POPPLER = r'/opt/local/bin' 
 
 # --- Keywords for document grouping ---
 TITLE_KEYWORDS = ["Surat Pernyataan", "Surat Tugas", "Surat Keterangan",
@@ -40,34 +37,21 @@ def is_new_document(text):
             return True
     return False
 
-def group_pages(ocr_results_dict): # Parameter renamed to avoid confusion
-    """Groups OCR results into separate letters based on predefined keywords.
-    
-    Args:
-        ocr_results_dict (dict): A dictionary where keys are document identifiers
-                            (e.g., page numbers, image paths) and values are
-                            the OCR'd text for that page.
-    
-    Returns:
-        list: A list of strings, where each string represents a grouped document.
-    """
+def group_pages(ocr_results_dict):
+    """Groups OCR results into separate letters based on predefined keywords."""
     grouped_docs = []
     current_doc = ""
-
-    # Sort items by filename (assuming page_1.png, page_2.png for sequential order)
-    sorted_ocr_items = sorted(ocr_results_dict.items(), 
+    sorted_ocr_items = sorted(ocr_results_dict.items(),
                               key=lambda item: int(re.search(r'\d+', item[0]).group()) if re.search(r'\d+', item[0]) else 0)
 
     for img_path, text in sorted_ocr_items:
         if current_doc and is_new_document(text):
-            grouped_docs.append(current_doc)  # Save previous document
-            current_doc = text  # Start a new one
+            grouped_docs.append(current_doc)
+            current_doc = text
         else:
-            current_doc += "\n" + text if current_doc else text  # Merge if not new
-
+            current_doc += "\n" + text if current_doc else text
     if current_doc:
-        grouped_docs.append(current_doc)  # Save the last document
-
+        grouped_docs.append(current_doc)
     return grouped_docs
 
 def download_pdf(pdf_url, output_dir):
@@ -86,7 +70,6 @@ def download_pdf(pdf_url, output_dir):
 def perform_ocr_and_get_page_texts(image_dir):
     """Performs OCR on images and returns a dictionary of page_path: text."""
     ocr_results_per_page = {}
-    # Ensure stable processing order by sorting filenames
     for filename in sorted(os.listdir(image_dir), key=lambda f: int(re.search(r'\d+', f).group()) if re.search(r'\d+', f) else 0):
         if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff')):
             img_path = os.path.join(image_dir, filename)
@@ -95,88 +78,74 @@ def perform_ocr_and_get_page_texts(image_dir):
                 print(f"Gagal baca gambar: {img_path}")
                 continue
             text = pytesseract.image_to_string(img).strip()
-            ocr_results_per_page[filename] = text # Store text per page
+            ocr_results_per_page[filename] = text
     print('OCR per page completed.')
     return ocr_results_per_page
 
 def is_ugm_format(ocr_text):
     print('Checking UGM format...')
-    return "universitas gadjah mada" in ocr_text[:500].lower() # Increased check area for robustness
+    return "universitas gadjah mada" in ocr_text[:500].lower() 
 
 def classify_document(ocr_text):
     patterns = {
-        "surat_tugas": r"(?i)\b(surat tugas|yang bertanda tangan.*memberikan tugas kepada)\b",
-        "surat_keterangan": r"(?i)\b(surat keterangan)\b",
-        "surat_permohonan": r"(?i)\b(permohonan|sehubungan dengan.*terima kasih)\b",
-        # "surat_rekomendasi_beasiswa": r"(?i)\b(surat rekomendasi beasiswa)\b",
+        "surat_tugas": r"(?i)(surat tugas|yang bertanda tangan.*memberikan tugas kepada)",
+        "surat_keterangan": r"(?i)(surat keterangan)",
+        "surat_permohonan": r"(?i)(permohonan|sehubungan dengan.*terima kasih)",
     }
-
     for category, pattern in patterns.items():
-        if re.search(pattern, ocr_text, re.IGNORECASE):
+        if re.search(pattern, ocr_text, re.IGNORECASE | re.DOTALL):
             return category.title().replace("_", " ")
-    print('Document type classified as "Tidak Diketahui".')
     return "Tidak Diketahui"
 
 def detect_patterns(text, letter_type):
     patterns = {
         "Surat Permohonan": {
-            "nomor_surat": r"(\d+/UN[1I][A-Z0-9.-]*\/[A-Z0-9.-]+\/[A-Z]+\/[A-Z]+\/\d{4})", 
+            "nomor_surat": r"(\d+/UN[1I]/?([A-Z0-9.-]+\/){1,3}\d{4})", 
             "isi_surat": r"((?:Dengan hormat|Sehubungan dengan).*?terima kasih)",
-            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
+            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
             "penerima_surat": r"Yth\.\s*(.*?)\s*Dengan", 
             "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         },
-        # tidak memiliki data pengirim/penerima
         "Surat Tugas": { 
-            "nomor_surat": r"(\d+/UN[1I][A-Z0-9.-]*\/[A-Z0-9.-]+\/[A-Z]+\/[A-Z]+\/\d{4})", 
-            "isi_surat": r"(Yang bertanda tangan.*?(?:mestinya|semestinya)\.)",
-            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
+            "nomor_surat": r"(\d+/UN[1I]/?([A-Z0-9.-]+\/){1,3}\d{4})", 
+            "isi_surat": r"((?:Yang bertanda tangan|Yang bertandatangan).*?(?:mestinya|semestinya)\.)",
+            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
             "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         },
         "Surat Keterangan": { 
-           "nomor_surat": r"(\d+/UN[1I][A-Z0-9.-]*\/[A-Z0-9.-]+\/[A-Z]+\/[A-Z]+\/\d{4})", 
-            "isi_surat": r"(Yang bertanda tangan.*?(?:mestinya|semestinya)\.)",
-            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
+           "nomor_surat": r"(\d+/UN[1I]/?([A-Z0-9.-]+\/){1,3}\d{4})", 
+            "isi_surat": r"((?:Yang bertanda tangan|Yang bertandatangan).*?(?:mestinya|semestinya)\.)",
+            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
             "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         },
-        "default": { 
-            "nomor_surat": r"(\d+/UN[1I][A-Z0-9.-]*\/[A-Z0-9.-]+\/[A-Z]+\/[A-Z]+\/\d{4})", 
-            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
+        "default": {
+            "nomor_surat": r"(\d+/UN[1I]/?([A-Z0-9.-]+\/){1,3}\d{4})", 
+            "ttd_surat": r"(?:a\.n\.|u\.b\.|n\.b\.)?\s*(?:Ketua|Dekan|Rektor|Rektor|Direktur|Wakil Dekan|Kepala Departemen|Sekretaris).*?\s*([A-Za-z.,\s-]+)\s*(?:NIP\.?|NIKA\.?)\s*\d+",
             "tanggal": r"([A-Za-z\s]+),\s*(\d{1,2}\s+(?:Januari|Jan|Februari|Feb|Maret|Mar|April|Apr|Mei|May|Juni|Jun|Juli|Jul|Agustus|Agu|September|Sep|Oktober|Okt|November|Nov|Desember|Des)\s+\d{4})"
         }
     }
-
     result = {}
     pattern_set = patterns.get(letter_type, patterns["default"])
-
     for key, regex in pattern_set.items():
-        # Pastikan flags re.IGNORECASE dan re.DOTALL selalu digunakan
         match = re.search(regex, text, flags=re.IGNORECASE | re.DOTALL)
         if match:
             if key == "tanggal":
-                # Ambil hanya grup tangkap kedua, yaitu bagian tanggal, bulan, tahun
                 full_match_text = match.group(2).strip()
-                # Posisi start dari grup tangkap kedua
                 start_pos = match.start(2)
                 length = len(full_match_text)
             elif key == "ttd_surat":
-                # Pastikan ini tetap mengambil nama orang dari group 1
                 full_match_text = match.group(1).strip()
                 start_pos = match.start(1)
                 length = len(full_match_text)
             else:
-                # Untuk key lain, seperti sebelumnya, ambil group 1
                 full_match_text = match.group(1).strip()
                 start_pos = match.start(1)
                 length = len(full_match_text)
-
             result[key] = {
                 'text': full_match_text,
                 'start': start_pos,
                 'length': length
             }
-    
-    print('Patterns detected.')
     return result
 
 # --- Flask Routes ---
@@ -216,7 +185,7 @@ def background_process(pdf_url, task_id):
         # 3. Process each grouped document
         all_processed_docs = []
         for i, doc_text in enumerate(grouped_documents):
-            is_ugm = is_ugm_format(doc_text) # Check UGM format on the full document
+            is_ugm = is_ugm_format(doc_text)
             letter_type = classify_document(doc_text)
             extracted_fields = detect_patterns(doc_text, letter_type)
             
