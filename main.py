@@ -70,7 +70,8 @@ def download_pdf(pdf_url, output_dir):
 def perform_ocr_and_get_page_texts(image_dir):
     """Performs OCR on images and returns a dictionary of page_path: text."""
     ocr_results_per_page = {}
-    for filename in sorted(os.listdir(image_dir), key=lambda f: int(re.search(r'\d+', f).group()) if re.search(r'\d+', f) else 0):
+    for filename in sorted(os.listdir(image_dir), key=lambda f: int(re.search(r'\d+', f)
+        .group()) if re.search(r'\d+', f) else 0):
         if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff')):
             img_path = os.path.join(image_dir, filename)
             img = cv2.imread(img_path)
@@ -161,10 +162,12 @@ def submit_pdf():
     pdf_url = data.get("pdf_url")
 
     if not pdf_url or not task_id:
-        return jsonify({"success": False, "message": "Missing 'pdf_url' or 'task_id'"}), 400
+        return jsonify({"success": False, 
+            "message": "Missing 'pdf_url' or 'task_id'"}), 400
 
     Thread(target=background_process, args=(pdf_url, task_id)).start()
-    return jsonify({"success": True, "message": "Job accepted and processing in background"}), 202
+    return jsonify({"success": True, 
+        "message": "Job accepted and processing in background"}), 202
 
 def background_process(pdf_url, task_id):
     print(f'Starting background process for task_id: {task_id}')
@@ -178,17 +181,14 @@ def background_process(pdf_url, task_id):
 
         # 1. Perform OCR to get text for each page
         ocr_results_per_page = perform_ocr_and_get_page_texts(temp_dir)
-        
         # 2. Group pages into logical documents using is_new_document and group_pages
         grouped_documents = group_pages(ocr_results_per_page)
-
         # 3. Process each grouped document
         all_processed_docs = []
         for i, doc_text in enumerate(grouped_documents):
             is_ugm = is_ugm_format(doc_text)
             letter_type = classify_document(doc_text)
-            extracted_fields = detect_patterns(doc_text, letter_type)
-            
+            extracted_fields = detect_patterns(doc_text, letter_type) 
             all_processed_docs.append({
                 "document_index": i + 1,
                 "is_ugm_format": is_ugm,
@@ -198,7 +198,6 @@ def background_process(pdf_url, task_id):
             })
 
         new_path = pdf_url.split('suratMasuk/')[-1] if 'suratMasuk/' in pdf_url else os.path.basename(pdf_url)
-
         headers = {
             'Content-Type': 'application/json',  
             'Accept': 'application/json'         
@@ -209,7 +208,6 @@ def background_process(pdf_url, task_id):
                 "pdf_url": new_path,
                 "processed_documents": all_processed_docs # Send info for all found docs
             }, headers=headers)
-        
             print(f'Successfully sent results to Laravel. Status Code: {response.status_code}')
         except Exception as e:
             print(f"Failed to send results to Laravel: {e}")
