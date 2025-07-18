@@ -7,7 +7,8 @@ import tempfile
 import requests
 import pytesseract
 import cv2
-import editdistance # Make sure to install: pip install editdistance
+import editdistance
+import psutil # Import psutil for memory monitoring
 
 from flask import Flask, request, jsonify
 from pdf2image import convert_from_path
@@ -24,10 +25,10 @@ POPPLER = r'/opt/local/bin'
 
 # --- Path to your Ground Truth data ---
 # Pastikan direktori ini ada dan berisi file JSON ground truth Anda
-GROUND_TRUTH_DIR = './testing/keterangan' 
+# GROUND_TRUTH_DIR = './testing/keterangan' 
 # GROUND_TRUTH_DIR = './testing/permohonan' 
 # GROUND_TRUTH_DIR = './testing/tidak_diketahui' 
-# GROUND_TRUTH_DIR = './testing/tugas' 
+GROUND_TRUTH_DIR = './testing/tugas' 
 
 # --- Keywords for document grouping ---
 TITLE_KEYWORDS = ["Surat Pernyataan", "Surat Tugas", "Surat Keterangan",
@@ -271,32 +272,67 @@ def submit_pdf():
     Thread(target=background_process, args=(pdf_url, task_id)).start()
     return jsonify({"success": True, "message": "Job accepted and processing in background"}), 202
 
-# --- Modified background_process function with print formatting ---
+# --- Modified background_process function with print formatting and performance metrics ---
 def background_process(pdf_path_or_url, task_id):
     """
     Processes a PDF file (either local path or URL) and performs OCR,
     document classification, and accuracy calculation.
-    Prints the testing results to the console.
+    Prints the testing results and performance metrics to the console.
     """
+    process = psutil.Process(os.getpid()) # Get current process for memory monitoring
+
     print(f'Starting OCR process for task_id: {task_id} with PDF: {pdf_path_or_url}')
     temp_dir = tempfile.mkdtemp()
-    try:
-        # Now download_pdf handles both local paths and URLs
-        local_pdf_path = download_pdf(pdf_path_or_url, temp_dir)
-        images = convert_from_path(local_pdf_path, poppler_path=POPPLER)
 
+    # Initial memory usage
+    initial_memory = process.memory_info().rss / (1024 * 1024) # in MB
+    peak_memory = initial_memory
+    
+    try:
+        start_time_total = time.perf_counter()
+
+        # Download/Copy PDF
+        start_time_download = time.perf_counter()
+        local_pdf_path = download_pdf(pdf_path_or_url, temp_dir)
+        end_time_download = time.perf_counter()
+        download_time = end_time_download - start_time_download
+        peak_memory = max(peak_memory, process.memory_info().rss / (1024 * 1024))
+
+        # Convert PDF to Images
+        start_time_convert = time.perf_counter()
+        images = convert_from_path(local_pdf_path, poppler_path=POPPLER)
         for i, image in enumerate(images):
             image.save(os.path.join(temp_dir, f"page_{i+1}.png"), "PNG")
+        end_time_convert = time.perf_counter()
+        convert_time = end_time_convert - start_time_convert
+        peak_memory = max(peak_memory, process.memory_info().rss / (1024 * 1024))
 
+        # Perform OCR
+        start_time_ocr = time.perf_counter()
         ocr_results_per_page = perform_ocr_and_get_page_texts(temp_dir)
+        end_time_ocr = time.perf_counter()
+        ocr_time = end_time_ocr - start_time_ocr
+        peak_memory = max(peak_memory, process.memory_info().rss / (1024 * 1024))
+
+        # Group Pages
+        start_time_grouping = time.perf_counter()
         grouped_documents = group_pages(ocr_results_per_page)
+        end_time_grouping = time.perf_counter()
+        grouping_time = end_time_grouping - start_time_grouping
+        peak_memory = max(peak_memory, process.memory_info().rss / (1024 * 1024))
 
         all_processed_docs = []
         for i, doc_text in enumerate(grouped_documents):
             is_ugm = is_ugm_format(doc_text)
             letter_type = classify_document(doc_text)
             print("------- type : ", letter_type)
+            
+            # Detect Patterns
+            start_time_pattern_detection = time.perf_counter()
             extracted_fields = detect_patterns(doc_text, letter_type)
+            end_time_pattern_detection = time.perf_counter()
+            pattern_detection_time = end_time_pattern_detection - start_time_pattern_detection
+            peak_memory = max(peak_memory, process.memory_info().rss / (1024 * 1024))
             
             ground_truth_data = load_ground_truth(os.path.basename(local_pdf_path)) 
 
@@ -369,9 +405,25 @@ def background_process(pdf_path_or_url, task_id):
                 "extracted_fields": extracted_fields,
                 "accuracy_metrics": accuracy_metrics 
             })
+        print(all_processed_docs)    
+        
+        end_time_total = time.perf_counter()
+        total_processing_time = end_time_total - start_time_total
+        final_memory = process.memory_info().rss / (1024 * 1024) # in MB
 
-        # Removed the Laravel hook part here since you don't want to connect to Laravel.
-        # If you still want to send data somewhere else, you'd add that logic here.
+        print("\n" + "#"*70)
+        print(f"RINGKASAN PERFORMA UNTUK PDF: {os.path.basename(local_pdf_path)}")
+        print("#"*70)
+        print(f"  Waktu Pengunduhan/Penyalinan PDF: {download_time:.4f} detik")
+        print(f"  Waktu Konversi PDF ke Gambar:     {convert_time:.4f} detik")
+        print(f"  Waktu Proses OCR:                 {ocr_time:.4f} detik")
+        print(f"  Waktu Pengelompokan Dokumen:      {grouping_time:.4f} detik")
+        print(f"  Waktu Deteksi Pola:               {pattern_detection_time:.4f} detik (per dokumen)")
+        print(f"  Waktu Pemrosesan Total:           {total_processing_time:.4f} detik")
+        print(f"  Penggunaan Memori Awal:           {initial_memory:.2f} MB")
+        print(f"  Penggunaan Memori Puncak:         {peak_memory:.2f} MB")
+        print(f"  Penggunaan Memori Akhir:          {final_memory:.2f} MB")
+        print("#"*70 + "\n")
 
     except Exception as e:
         print(f"Error in background_process for task_id {task_id}: {e}")
@@ -410,34 +462,34 @@ if __name__ == "__main__":
     # ---------------- SURAT PERMOHONAN -------------------------
     # pdf_files_to_test = [
     #     r'./file_pdf/permohonan/23774.pdf',
-    #     r'./file_pdf/permohonan/20250124_083609.pdf',
-    #     r'./file_pdf/permohonan/Scan.pdf',
-    #     r'./file_pdf/permohonan/Pengantar Penelitian PA John Feri Jr. Ramadhan TRPL.pdf',
+        # r'./file_pdf/permohonan/20250124_083609.pdf',
+        # r'./file_pdf/permohonan/Scan.pdf',
+        # r'./file_pdf/permohonan/Pengantar Penelitian PA John Feri Jr. Ramadhan TRPL.pdf',
     #     r'./file_pdf/permohonan/Pengantar PI  M.Reynaldi Maso dkk TRIK.pdf',
     # ]
     # ---------------- SURAT TUGAS -------------------------
-    # pdf_files_to_test = [
-    #     r'./file_pdf/tugas/5163 Surat Tugas MTQMN 3-10 November 2023.pdf',
+    pdf_files_to_test = [
+        # r'./file_pdf/tugas/5163 Surat Tugas MTQMN 3-10 November 2023.pdf',
     #     r'./file_pdf/tugas/Surat Tugas MAGANG  Sigit Yunianto TRE.pdf',
-    #     r'./file_pdf/tugas/20250124_083620.pdf',
+        r'./file_pdf/tugas/20250124_083620.pdf',
     #     r'./file_pdf/tugas/Surat Tugas MAGANG Rosus Pangaribowo dkk TRE-1.pdf',
     #     r'./file_pdf/tugas/Surat Tugas MAGANG Rosus Pangaribowo dkk TRE-2.pdf',
-    # ]
-    # ---------------- SURAT KETERANGAN -------------------------
-    pdf_files_to_test = [
-        r'./file_pdf/keterangan/SKAK an.Devina Dwiyanti.pdf',
-        r'./file_pdf/keterangan/8 - Surat Aktif Adiyatma Hilmy.pdf',
-        r'./file_pdf/keterangan/2025-04_479064_345_Ridha_Fauziyya_Rahma_24_Genap (1).pdf',
-        r'./file_pdf/keterangan/20250212_144606.pdf',
-        r'./file_pdf/keterangan/SKAK an.Alya Zakhira Anjani-paraf (1).pdf',
     ]
+    # ---------------- SURAT KETERANGAN -------------------------
+    # pdf_files_to_test = [
+    #     r'./file_pdf/keterangan/SKAK an.Devina Dwiyanti.pdf',
+    #     r'./file_pdf/keterangan/8 - Surat Aktif Adiyatma Hilmy.pdf',
+    #     r'./file_pdf/keterangan/2025-04_479064_345_Ridha_Fauziyya_Rahma_24_Genap (1).pdf',
+    #     r'./file_pdf/keterangan/20250212_144606.pdf',
+    #     r'./file_pdf/keterangan/SKAK an.Alya Zakhira Anjani-paraf (1).pdf',
+    # ]
     # ---------------- TIDAK TERKLASIFIKASI -------------------------
     # pdf_files_to_test = [
         # r'./file_pdf/tidak_diketahui/Surat Edaran Peringatan Peniupuan Mengatasnamakan Pimpinan UGM.pdf',
         # r'./file_pdf/tidak_diketahui/BA Pendadaran  an. ALYA ZAKHIRA ANJANI.xlsx - Undangan.pdf',
         # r'./file_pdf/tidak_diketahui/Surat Rekomendasi Program Magenta Dicky Ardiansyah Pramana Putra,2 (1) (2).pdf',
-        # r'./file_pdf/tidak_diketahui/Surat Rekomendasi BEM KM SV UGM.pdf',
-        # r'./file_pdf/tidak_diketahui/Surat Rekomendasi_Vellya Riona.pdf',
+    #     r'./file_pdf/tidak_diketahui/Surat Rekomendasi BEM KM SV UGM.pdf',
+    #     r'./file_pdf/tidak_diketahui/Surat Rekomendasi_Vellya Riona.pdf',
     # ]
     
     # --- PENTING: Ganti baris di bawah ini dengan file PDF yang ingin Anda uji! ---
